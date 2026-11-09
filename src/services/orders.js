@@ -30,14 +30,17 @@ export async function settleOrder(orderId, { ref, actor, fromStatuses }) {
 }
 
 // Asks the provider whether this order was really paid, and settles it only if amount and currency match.
-export async function verifyAndSettleGateway(order) {
-  if (order.status !== 'AWAITING_PAYMENT') return { settled: false, status: order.status }
+// A CANCELLED order can still be settled: if the provider confirms the money arrived, we must credit it
+// (for example the buyer paid after the order expired or after pressing Cancel).
+const SETTLEABLE = ['AWAITING_PAYMENT', 'CANCELLED']
+export async function verifyAndSettleGateway(order, source = 'gateway') {
+  if (!SETTLEABLE.includes(order.status)) return { settled: false, status: order.status }
   const v = order.method === 'PAYSTACK' ? await verifyPaystack(order.gatewayRef) : await verifyFlutterwave(order.gatewayRef)
   if (!v.paid) return { settled: false, status: order.status }
   if (v.amountKobo !== order.priceKobo) {
     await audit('system', 'DEPOSIT_AMOUNT_MISMATCH', `${order._id} expected ${order.priceKobo} got ${v.amountKobo}`)
     return { settled: false, status: order.status, mismatch: true }
   }
-  const r = await settleOrder(order._id, { ref: v.ref, actor: `gateway:${order.method}`, fromStatuses: ['AWAITING_PAYMENT'] })
+  const r = await settleOrder(order._id, { ref: v.ref, actor: `${source}:${order.method}`, fromStatuses: SETTLEABLE })
   return { settled: r.settled, status: 'PAID' }
 }

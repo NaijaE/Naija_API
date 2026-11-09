@@ -18,6 +18,10 @@ import { moveWithdrawal } from '../services/withdrawals.js'
 import { getSettings, changesSchema, assertConsistent } from '../services/settings.js'
 import { inspectVideo, proofLink, videoUploadSignature, VIDEO_ID_RE } from '../services/cloudinary.js'
 import { lagosDay } from '../utils/dates.js'
+import { runReconcile } from '../jobs/reconcile.js'
+import { sendEmail, sendSms } from '../services/notify.js'
+import { normalizePhone } from '../utils/codes.js'
+import { byUser, MIN } from '../middleware/limits.js'
 
 const r = Router()
 r.use(requireAuth, requireAdmin)
@@ -181,6 +185,21 @@ r.post('/settings/proposals/:id/reject', validate(idParam, 'params'), validate(r
 }))
 
 r.post('/uploads/video-signature', (_req, res) => res.json(videoUploadSignature()))
+
+// Re-check unpaid Paystack/Flutterwave orders with the provider right now (the same job that runs every 5 minutes).
+r.post('/reconcile', ah(async (_req, res) => res.json(await runReconcile())))
+
+// Send yourself a test email and/or SMS to confirm the providers are set up.
+r.post('/test-notify', byUser(60 * MIN, 10), validate(z.object({ email: z.string().trim().email().optional(), phone: z.string().optional() })), ah(async (req, res) => {
+  const out = {}
+  if (req.body.email) out.email = await sendEmail(req.body.email, 'Naija Earn test email', 'If you can read this, email sending works.')
+  if (req.body.phone) {
+    const phone = normalizePhone(req.body.phone)
+    out.sms = phone ? await sendSms(phone, 'Naija Earn test SMS. If you can read this, SMS sending works.') : { ok: false, error: 'Not a valid Nigerian phone number' }
+  }
+  if (!out.email && !out.sms) throw httpError(400, 'Provide an email and/or a phone number.')
+  res.json(out)
+}))
 
 r.get('/regulator', ah(async (_req, res) => {
   const [camp, rewards, liab, held, paid, deps, cfg] = await Promise.all([

@@ -1,7 +1,5 @@
 // Usage: node scripts/seedAdmin.js admin@example.com 'StrongPassword' "Admin Name"
 // Run it twice with two different emails: settings changes need a second admin to approve.
-import dns from 'node:dns'
-dns.setServers(['8.8.8.8', '1.1.1.1'])
 import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
 import { config } from '../src/config.js'

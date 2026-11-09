@@ -42,8 +42,16 @@ services:
         sync: false
       - key: MAIL_FROM
         sync: false
+      - key: BREVO_API_KEY
+        sync: false
       - key: TERMII_API_KEY
         sync: false
+      - key: TERMII_SENDER_ID
+        sync: false
+      - key: TERMII_CHANNEL
+        value: dnd
+      - key: RECONCILE_ENABLED
+        value: "true"
       - key: BANK_NAME
         sync: false
       - key: BANK_ACCOUNT_NAME

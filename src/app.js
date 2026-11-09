@@ -28,7 +28,7 @@ export function createApp() {
   app.use('/api/webhooks', express.raw({ type: '*/*', limit: '1mb' }), webhooks)
 
   app.use(express.json({ limit: '100kb' }))
-  app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false }))
+  app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 3000, standardHeaders: true, legacyHeaders: false }))
   app.use('/api', api)
 
   app.use(notFound)
