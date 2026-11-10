@@ -9,7 +9,7 @@ import { validate } from '../middleware/validate.js'
 import { requireAuth, requireMember, requireVerified } from '../middleware/auth.js'
 import { proofUpload } from '../middleware/upload.js'
 import { getSettings } from '../services/settings.js'
-import { inspectVideo, uploadProof, VIDEO_ID_RE } from '../services/cloudinary.js'
+import { uploadProof } from '../services/cloudinary.js'
 import { initPaystack, initFlutterwave } from '../services/payments.js'
 import { verifyAndSettleGateway } from '../services/orders.js'
 import { config } from '../config.js'
@@ -21,8 +21,6 @@ r.use(requireAuth, requireVerified, requireMember)
 const create = z.object({
   packageId: z.enum(['spark', 'boost', 'prime']),
   method: z.enum(['PAYSTACK', 'FLUTTERWAVE', 'BANK_TRANSFER']),
-  title: z.string().trim().min(3).max(100),
-  videoPublicId: z.string().regex(VIDEO_ID_RE, 'Invalid video reference'),
 })
 
 r.get('/', ah(async (req, res) => {
@@ -35,22 +33,20 @@ r.post('/', proofUpload.single('proof'), validate(create), ah(async (req, res) =
   const cfg = await getSettings()
   const pkg = cfg.packages.find((p) => p.id === b.packageId)
   if (!pkg) throw httpError(400, 'Unknown package.')
-  const video = await inspectVideo(b.videoPublicId)
-  if (video.durationSec < 10 || video.durationSec > 120) throw httpError(400, 'Your video must be between 10 and 120 seconds long.')
   if (b.method === 'BANK_TRANSFER' && !req.file) throw httpError(400, 'Upload your proof of payment for a bank transfer.')
   const proof = b.method === 'BANK_TRANSFER' ? await uploadProof(req.file.buffer, req.file.originalname) : undefined
 
   const order = await Order.create({
     user: req.user._id, packageId: pkg.id, packageName: pkg.name, priceKobo: pkg.priceKobo, completions: pkg.completions,
     memberRewardKobo: pkg.memberRewardKobo, advertiserRateKobo: Math.floor(pkg.priceKobo / pkg.completions),
-    method: b.method, title: b.title, durationSec: video.durationSec, videoPublicId: b.videoPublicId, videoUrl: video.url, proof,
+    method: b.method, proof,
     status: b.method === 'BANK_TRANSFER' ? 'PENDING_REVIEW' : 'AWAITING_PAYMENT',
   })
   await audit(req.user.email, 'DEPOSIT_STARTED', `${order._id} ${pkg.name} ${naira(pkg.priceKobo)} ${b.method}`)
 
   if (b.method === 'BANK_TRANSFER') {
     return res.status(201).json({ order: { id: order._id, status: order.status }, bank: { ...config.bank, reference: String(order._id) },
-      message: 'Proof received. An admin will match it to our bank statement and confirm your deposit.' })
+      message: 'Proof received. An admin will match it to our bank statement and confirm your deposit. After that, add your video from My campaigns.' })
   }
   order.gatewayRef = `NE-${order._id}`
   const returnUrl = `${config.paymentReturnUrl}${config.paymentReturnUrl.includes('?') ? '&' : '?'}order=${order._id}`

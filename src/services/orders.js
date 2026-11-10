@@ -17,10 +17,13 @@ export async function settleOrder(orderId, { ref, actor, fromStatuses }) {
     )
     if (!o) return { settled: false }
     const buyer = await User.findById(o.user).session(session)
+    // New orders have no video yet: the funded campaign waits (AWAITING_VIDEO) until the advertiser or an admin adds one.
+    // Orders made before this change already carry a video, so those go straight to review.
+    const hasVideo = Boolean(o.videoUrl)
     const [c] = await Campaign.create([{
-      name: `${o.packageName} package: ${o.title}`, sponsor: buyer ? buyer.name : 'Advertiser', title: o.title, durationSec: o.durationSec,
+      name: o.title ? `${o.packageName} package: ${o.title}` : `${o.packageName} package`, sponsor: buyer ? buyer.name : 'Advertiser', title: o.title, durationSec: o.durationSec,
       videoPublicId: o.videoPublicId, videoUrl: o.videoUrl, rewardKobo: o.memberRewardKobo, advertiserRateKobo: o.advertiserRateKobo,
-      budgetKobo: o.priceKobo, completionCap: o.completions, status: 'CONTENT_REVIEW', prepaymentRef: ref, order: o._id, packageId: o.packageId,
+      budgetKobo: o.priceKobo, completionCap: o.completions, status: hasVideo ? 'CONTENT_REVIEW' : 'AWAITING_VIDEO', prepaymentRef: ref, order: o._id, packageId: o.packageId,
     }], { session })
     o.campaign = c._id
     await o.save({ session })

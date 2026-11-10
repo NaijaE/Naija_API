@@ -24,9 +24,17 @@ export async function inspectVideo(publicId) {
   ready()
   if (!VIDEO_ID_RE.test(publicId)) throw httpError(400, 'Invalid video reference.')
   let info
-  try { info = await cloudinary.api.resource(publicId, { resource_type: 'video' }) } catch { throw httpError(400, 'Video not found. Upload it first.') }
+  try { info = await cloudinary.api.resource(publicId, { resource_type: 'video' }) }
+  catch (e) {
+    const why = (e && e.error && e.error.message) || (e && e.message) || 'unknown'
+    console.error(`Cloudinary lookup failed for ${publicId}: ${why}`)
+    throw httpError(400, `Video not found. Upload it first.${config.isProd ? '' : ` (${why})`}`)
+  }
   return { url: cloudinary.url(publicId, { resource_type: 'video', secure: true }), durationSec: Math.ceil(info.duration || 0) }
 }
+
+// Used by the admin diagnostics check: confirms the three Cloudinary values are accepted.
+export async function pingCloudinary() { ready(); await cloudinary.api.ping() }
 
 export function uploadProof(buffer, name) {
   ready()

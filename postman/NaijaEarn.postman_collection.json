@@ -601,7 +601,7 @@
       "name": "04 Advertise (buy a package)",
       "item": [
         {
-          "name": "Get signed video upload",
+          "name": "Step 2: get a signed video upload (after paying)",
           "request": {
             "method": "POST",
             "header": [],
@@ -616,7 +616,7 @@
                 "video-signature"
               ]
             },
-            "description": "Upload your video to uploadUrl from Postman or the browser (form-data: file, api_key, timestamp, folder, signature). Copy the returned public_id into {{videoPublicId}}."
+            "description": "Upload your video to uploadUrl (form-data: file, api_key, timestamp, folder, signature). Copy the returned public_id into {{videoPublicId}}, then run \"Step 2: add the video to the paid package\"."
           },
           "event": [
             {
@@ -652,7 +652,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"packageId\": \"spark\",\n  \"method\": \"PAYSTACK\",\n  \"title\": \"My sponsor video\",\n  \"videoPublicId\": \"{{videoPublicId}}\"\n}",
+              "raw": "{\n  \"packageId\": \"spark\",\n  \"method\": \"PAYSTACK\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -696,7 +696,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"packageId\": \"boost\",\n  \"method\": \"FLUTTERWAVE\",\n  \"title\": \"My sponsor video\",\n  \"videoPublicId\": \"{{videoPublicId}}\"\n}",
+              "raw": "{\n  \"packageId\": \"boost\",\n  \"method\": \"FLUTTERWAVE\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -743,16 +743,6 @@
                 {
                   "key": "method",
                   "value": "BANK_TRANSFER",
-                  "type": "text"
-                },
-                {
-                  "key": "title",
-                  "value": "My sponsor video",
-                  "type": "text"
-                },
-                {
-                  "key": "videoPublicId",
-                  "value": "{{videoPublicId}}",
                   "type": "text"
                 },
                 {
@@ -909,6 +899,40 @@
               ]
             }
           }
+        },
+        {
+          "name": "Step 2: add the video to the paid package",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/advertiser/campaigns/{{orderId}}/video",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "advertiser",
+                "campaigns",
+                "{{orderId}}",
+                "video"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"My sponsor video\",\n  \"videoPublicId\": \"{{videoPublicId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -980,6 +1004,34 @@
     {
       "name": "06 Admin",
       "item": [
+        {
+          "name": "System check: Cloudinary, Paystack, Brevo, Termii",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/diagnostics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "diagnostics"
+              ]
+            }
+          }
+        },
         {
           "name": "Overview + 7-day analytics",
           "request": {
@@ -1913,6 +1965,94 @@
                 "api",
                 "admin",
                 "reconcile"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Upload a video for a paid package (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/campaigns/{{campaignId}}/video",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "campaigns",
+                "{{campaignId}}",
+                "video"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Client video\",\n  \"videoPublicId\": \"{{videoPublicId}}\",\n  \"goLive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Send a video back for a new one (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/campaigns/{{campaignId}}/content",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "campaigns",
+                "{{campaignId}}",
+                "content"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approve\": false,\n  \"requestNewVideo\": true,\n  \"reason\": \"The footage is blurry. Please upload a clearer video.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
               ]
             }
           }

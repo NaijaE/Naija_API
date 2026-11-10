@@ -1,11 +1,18 @@
 import { config } from '../config.js'
 import { httpError } from '../utils/httpError.js'
 
+// The provider's own reason is always written to the server log. Outside production it is also returned,
+// so a test or staging problem is easy to read. In production only a generic message reaches the browser.
 const call = async (url, opts, label) => {
   let res
-  try { res = await fetch(url, { ...opts, signal: AbortSignal.timeout(20000) }) } catch { throw httpError(502, `${label} is unreachable. Try again.`) }
+  try { res = await fetch(url, { ...opts, signal: AbortSignal.timeout(20000) }) }
+  catch (e) { console.error(`${label} unreachable:`, e.message); throw httpError(502, `${label} is unreachable. Try again.`) }
   const json = await res.json().catch(() => ({}))
-  if (!res.ok) throw httpError(502, `${label} rejected the request.`)
+  if (!res.ok) {
+    const detail = (json && (json.message || json.error)) || ''
+    console.error(`${label} rejected the request (HTTP ${res.status}): ${detail}`)
+    throw httpError(502, `${label} rejected the request.${config.isProd ? '' : ` (${res.status}: ${detail})`}`)
+  }
   return json
 }
 
@@ -16,6 +23,7 @@ export async function initPaystack({ email, amountKobo, reference, callbackUrl }
     method: 'POST', headers: { Authorization: `Bearer ${config.paystackSecret}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, amount: amountKobo, reference, callback_url: callbackUrl, currency: 'NGN' }),
   }, 'Paystack')
+  if (!j.data || !j.data.authorization_url) throw httpError(502, 'Paystack did not return a payment link.')
   return { paymentUrl: j.data.authorization_url }
 }
 export async function verifyPaystack(reference) {

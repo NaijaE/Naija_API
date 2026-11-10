@@ -16,7 +16,8 @@ import { requireAuth, requireAdmin } from '../middleware/auth.js'
 import { settleOrder } from '../services/orders.js'
 import { moveWithdrawal } from '../services/withdrawals.js'
 import { getSettings, changesSchema, assertConsistent } from '../services/settings.js'
-import { inspectVideo, proofLink, videoUploadSignature, VIDEO_ID_RE } from '../services/cloudinary.js'
+import { inspectVideo, proofLink, videoUploadSignature, pingCloudinary, VIDEO_ID_RE } from '../services/cloudinary.js'
+import { config } from '../config.js'
 import { lagosDay } from '../utils/dates.js'
 import { runReconcile } from '../jobs/reconcile.js'
 import { sendEmail, sendSms } from '../services/notify.js'
@@ -125,14 +126,45 @@ r.post('/campaigns/:id/fund', validate(idParam, 'params'), validate(z.object({ a
   await audit(req.user.email, 'CAMPAIGN_FUNDED', `${c._id} ref ${req.body.reference}`)
   res.json({ campaign: c })
 }))
-// Approve or reject the video content of a paid package order.
-r.post('/campaigns/:id/content', validate(idParam, 'params'), validate(z.object({ approve: z.boolean(), reason: z.string().trim().max(300).optional() })), ah(async (req, res) => {
-  const { approve, reason } = req.body
-  if (!approve && !(reason && reason.length >= 3)) throw httpError(400, 'A reason is required to reject a video.')
-  const c = await Campaign.findOneAndUpdate({ _id: req.params.id, status: 'CONTENT_REVIEW' }, approve ? { status: 'ACTIVE', liveAt: new Date() } : { status: 'CLOSED' }, { new: true })
-  if (!c) throw httpError(409, 'Campaign is not waiting for content review.')
-  if (!approve && c.order) await Order.updateOne({ _id: c.order }, { refundDue: true, rejectReason: reason })
-  await audit(req.user.email, approve ? 'CONTENT_APPROVED' : 'CONTENT_REJECTED', `${c._id}${reason ? `: ${reason}` : ''}${approve ? '' : ' (refund due: handle outside the API)'}`)
+// Add a video to a paid package on the advertiser's behalf (or replace one that is still waiting for review).
+// With goLive the admin approves it at the same time; without it the video goes to the review queue.
+r.post('/campaigns/:id/video', validate(idParam, 'params'), validate(z.object({
+  title: z.string().trim().min(3).max(100), videoPublicId: z.string().regex(VIDEO_ID_RE, 'Invalid video reference'), goLive: z.boolean().default(true),
+})), ah(async (req, res) => {
+  const b = req.body
+  const v = await inspectVideo(b.videoPublicId)
+  if (v.durationSec < 10 || v.durationSec > 120) throw httpError(400, 'Video must be between 10 and 120 seconds.')
+  const set = { title: b.title, videoPublicId: b.videoPublicId, videoUrl: v.url, durationSec: v.durationSec, videoSubmittedAt: new Date(),
+    status: b.goLive ? 'ACTIVE' : 'CONTENT_REVIEW', ...(b.goLive ? { liveAt: new Date() } : {}), $unset: { videoRejectReason: 1 } }
+  const c = await Campaign.findOneAndUpdate({ _id: req.params.id, status: { $in: ['AWAITING_VIDEO', 'CONTENT_REVIEW'] } }, set, { new: true })
+  if (!c) throw httpError(409, 'This campaign is not waiting for a video.')
+  await audit(req.user.email, b.goLive ? 'VIDEO_ADDED_LIVE' : 'VIDEO_ADDED', `${c._id} "${b.title}"`)
+  res.json({ campaign: c })
+}))
+
+// Review a submitted video. Three outcomes:
+//   approve                     -> goes live
+//   reject + requestNewVideo    -> sent back; the paid budget stays and the advertiser uploads a corrected video
+//   reject                      -> campaign closed and a refund is flagged
+r.post('/campaigns/:id/content', validate(idParam, 'params'), validate(z.object({ approve: z.boolean(), requestNewVideo: z.boolean().optional(), reason: z.string().trim().max(300).optional() })), ah(async (req, res) => {
+  const { approve, requestNewVideo, reason } = req.body
+  if (!approve && !(reason && reason.length >= 3)) throw httpError(400, 'A reason is required when a video is not approved.')
+  let c
+  if (approve) {
+    c = await Campaign.findOneAndUpdate({ _id: req.params.id, status: 'CONTENT_REVIEW', videoUrl: { $exists: true, $ne: null } }, { status: 'ACTIVE', liveAt: new Date() }, { new: true })
+    if (!c) throw httpError(409, 'Campaign is not waiting for content review, or it has no video.')
+    await audit(req.user.email, 'CONTENT_APPROVED', String(c._id))
+  } else if (requestNewVideo) {
+    c = await Campaign.findOneAndUpdate({ _id: req.params.id, status: 'CONTENT_REVIEW' },
+      { status: 'AWAITING_VIDEO', videoRejectReason: reason, $unset: { videoUrl: 1, videoPublicId: 1, durationSec: 1, videoSubmittedAt: 1 } }, { new: true })
+    if (!c) throw httpError(409, 'Campaign is not waiting for content review.')
+    await audit(req.user.email, 'CONTENT_RETURNED', `${c._id}: ${reason}`)
+  } else {
+    c = await Campaign.findOneAndUpdate({ _id: req.params.id, status: 'CONTENT_REVIEW' }, { status: 'CLOSED' }, { new: true })
+    if (!c) throw httpError(409, 'Campaign is not waiting for content review.')
+    if (c.order) await Order.updateOne({ _id: c.order }, { refundDue: true, rejectReason: reason })
+    await audit(req.user.email, 'CONTENT_REJECTED', `${c._id}: ${reason} (refund due: handle outside the API)`)
+  }
   res.json({ campaign: c })
 }))
 r.patch('/campaigns/:id/status', validate(idParam, 'params'), validate(reasonBody.extend({ status: z.enum(['ACTIVE', 'PAUSED', 'CLOSED']) })), ah(async (req, res) => {
@@ -199,6 +231,48 @@ r.post('/test-notify', byUser(60 * MIN, 10), validate(z.object({ email: z.string
   }
   if (!out.email && !out.sms) throw httpError(400, 'Provide an email and/or a phone number.')
   res.json(out)
+}))
+
+// One call that tests every outside service the platform depends on. It never returns a key.
+r.get('/diagnostics', byUser(10 * MIN, 20), ah(async (_req, res) => {
+  const check = async (fn) => {
+    try { return { ok: true, ...((await fn()) || {}) } }
+    catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 200) } }
+  }
+  const get = async (url, headers) => {
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(10000) })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${j.message || j.error || 'no detail'}`)
+    return j
+  }
+  const missing = (what) => ({ ok: false, error: `${what} is not set` })
+  const c = config.cloudinary
+  const ps = config.paystackSecret
+  res.json({
+    environment: config.env,
+    clientOrigins: config.clientOrigins,
+    paymentReturnUrl: config.paymentReturnUrl,
+    mongo: { ok: mongoose.connection.readyState === 1 },
+    cloudinary: c.cloudName && c.apiKey && c.apiSecret
+      ? await check(async () => { await pingCloudinary(); return { cloudName: c.cloudName } })
+      : missing('CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY or CLOUDINARY_API_SECRET'),
+    paystack: ps
+      ? await check(async () => {
+        await get('https://api.paystack.co/bank?perPage=1', { Authorization: `Bearer ${ps}` })
+        return { keyMode: ps.startsWith('sk_live_') ? 'live' : ps.startsWith('sk_test_') ? 'test' : 'unrecognised' }
+      })
+      : missing('PAYSTACK_SECRET_KEY'),
+    brevo: config.brevoApiKey
+      ? await check(async () => { await get('https://api.brevo.com/v3/account', { 'api-key': config.brevoApiKey, accept: 'application/json' }) })
+      : (config.smtp.host ? { ok: true, via: 'smtp (not tested here)' } : missing('BREVO_API_KEY')),
+    termii: config.termii.apiKey
+      ? await check(async () => {
+        const j = await get(`https://api.ng.termii.com/api/get-balance?api_key=${encodeURIComponent(config.termii.apiKey)}`)
+        return { balance: j.balance, currency: j.currency, channel: config.termii.channel, senderId: config.termii.senderId }
+      })
+      : missing('TERMII_API_KEY'),
+    flutterwave: { configured: Boolean(config.flutterwave.secret), webhookHashSet: Boolean(config.flutterwave.hash) },
+  })
 }))
 
 r.get('/regulator', ah(async (_req, res) => {

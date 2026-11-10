@@ -8,6 +8,8 @@ import { ah } from '../utils/asyncHandler.js'
 import { httpError } from '../utils/httpError.js'
 import { validate } from '../middleware/validate.js'
 import { requireAuth, requireMember, requireVerified } from '../middleware/auth.js'
+import { audit } from '../models/AuditLog.js'
+import { inspectVideo, VIDEO_ID_RE } from '../services/cloudinary.js'
 import { lagosDay } from '../utils/dates.js'
 import { buildItem, summarize, buildTimeline, fillDays, receiptNumber, deriveStatus } from '../services/advertiserView.js'
 
@@ -35,9 +37,26 @@ r.get('/campaigns/:id', validate(idParam, 'params'), ah(async (req, res) => {
     ? await ViewSession.aggregate([{ $match: { campaign: campaign._id, status: 'COMPLETED', completedDay: { $gte: days[0] } } }, { $group: { _id: '$completedDay', n: { $sum: 1 } } }])
     : []
   res.json({
-    item, ref: order.ref || null, videoUrl: order.videoUrl, videoPublicId: order.videoPublicId,
+    item, ref: order.ref || null, videoUrl: (campaign && campaign.videoUrl) || order.videoUrl || null, videoPublicId: (campaign && campaign.videoPublicId) || order.videoPublicId || null,
     timeline: buildTimeline(order, campaign, deriveStatus(order, campaign)), daily: fillDays(rows, days),
   })
+}))
+
+// Step 2 of advertising: after paying, add (or replace, when it was sent back) the video for a paid package.
+const videoBody = z.object({ title: z.string().trim().min(3).max(100), videoPublicId: z.string().regex(VIDEO_ID_RE, 'Invalid video reference') })
+r.post('/campaigns/:id/video', validate(idParam, 'params'), validate(videoBody), ah(async (req, res) => {
+  const order = await Order.findOne({ _id: req.params.id, user: req.user._id, status: 'PAID' }).lean()
+  if (!order) throw httpError(404, 'Paid package not found.')
+  const video = await inspectVideo(req.body.videoPublicId)
+  if (video.durationSec < 10 || video.durationSec > 120) throw httpError(400, 'Your video must be between 10 and 120 seconds long.')
+  const c = await Campaign.findOneAndUpdate(
+    { order: order._id, status: 'AWAITING_VIDEO' },
+    { title: req.body.title, videoPublicId: req.body.videoPublicId, videoUrl: video.url, durationSec: video.durationSec, videoSubmittedAt: new Date(), status: 'CONTENT_REVIEW', $unset: { videoRejectReason: 1 } },
+    { new: true },
+  )
+  if (!c) throw httpError(409, 'This package is not waiting for a video.')
+  await audit(req.user.email, 'VIDEO_SUBMITTED', `${c._id} "${req.body.title}"`)
+  res.json({ ok: true })
 }))
 
 r.get('/receipts/:id', validate(idParam, 'params'), ah(async (req, res) => {

@@ -12,6 +12,7 @@ export function deriveStatus(order, campaign) {
   }
   if (!campaign) return 'IN_REVIEW'
   switch (campaign.status) {
+    case 'AWAITING_VIDEO': return 'NEEDS_VIDEO'
     case 'ACTIVE': return 'LIVE'
     case 'PAUSED': return 'PAUSED'
     case 'EXHAUSTED': return 'COMPLETED'
@@ -34,17 +35,19 @@ export function estimateDaysLeft(campaign, now = Date.now()) {
   return Math.ceil(remaining / perDay)
 }
 
-const UNUSED_BUDGET_STATES = ['CONTENT_REVIEW', 'ACTIVE', 'PAUSED']
+const UNUSED_BUDGET_STATES = ['AWAITING_VIDEO', 'CONTENT_REVIEW', 'ACTIVE', 'PAUSED']
 export function buildItem(order, campaign, now = Date.now()) {
   const status = deriveStatus(order, campaign)
   const paid = order.status === 'PAID'
   return {
-    id: order._id, title: order.title, packageId: order.packageId, packageName: order.packageName, status,
+    id: order._id, title: (campaign && campaign.title) || order.title || `${order.packageName} package`, packageId: order.packageId, packageName: order.packageName, status,
     priceKobo: order.priceKobo, viewsPurchased: order.completions, viewsDelivered: campaign ? campaign.completions : 0,
     advertiserRateKobo: order.advertiserRateKobo, method: order.method, createdAt: order.createdAt, paidAt: order.paidAt || null,
     liveAt: campaign ? campaign.liveAt || null : null, estimatedDaysLeft: estimateDaysLeft(campaign, now),
     budgetRemainingKobo: campaign && UNUSED_BUDGET_STATES.includes(campaign.status) ? campaign.budgetKobo - campaign.consumedKobo : 0,
     refundDue: Boolean(order.refundDue), rejectReason: order.rejectReason || null, hasReceipt: paid,
+    needsVideo: status === 'NEEDS_VIDEO', videoRejectReason: (campaign && campaign.videoRejectReason) || null,
+    videoPublicId: (campaign && campaign.videoPublicId) || order.videoPublicId || null,
   }
 }
 
@@ -60,6 +63,7 @@ export function summarize(items) {
     budgetRemainingKobo: sum(items, (i) => i.budgetRemainingKobo),
     live: items.filter((i) => i.status === 'LIVE').length,
     inReview: items.filter((i) => ['IN_REVIEW', 'PAYMENT_REVIEW'].includes(i.status)).length,
+    needsVideo: items.filter((i) => i.status === 'NEEDS_VIDEO').length,
     waitingPayment: items.filter((i) => i.status === 'WAITING_PAYMENT').length,
     campaigns: items.length,
   }
@@ -69,6 +73,8 @@ export function buildTimeline(order, campaign, status) {
   const ev = [{ key: 'ordered', label: 'Order placed', at: order.createdAt }]
   if (order.paidAt) ev.push({ key: 'paid', label: 'Payment confirmed', at: order.paidAt })
   if (status === 'PAYMENT_REJECTED') ev.push({ key: 'payment_rejected', label: 'Payment rejected', at: order.updatedAt, note: order.rejectReason })
+  if (campaign && campaign.videoSubmittedAt) ev.push({ key: 'video', label: 'Video submitted', at: campaign.videoSubmittedAt })
+  if (status === 'NEEDS_VIDEO' && campaign && campaign.videoRejectReason) ev.push({ key: 'returned', label: 'Video returned: please upload a new one', at: campaign.updatedAt, note: campaign.videoRejectReason })
   if (campaign && campaign.liveAt) ev.push({ key: 'live', label: 'Video approved and live', at: campaign.liveAt })
   if (status === 'REJECTED') ev.push({ key: 'rejected', label: 'Video not approved', at: campaign ? campaign.updatedAt : order.updatedAt, note: order.rejectReason })
   if (status === 'COMPLETED') ev.push({ key: 'completed', label: 'All purchased views delivered', at: campaign.updatedAt })
