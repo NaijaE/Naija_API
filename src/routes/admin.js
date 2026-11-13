@@ -105,14 +105,25 @@ r.get('/campaigns', validate(page, 'query'), ah(async (req, res) => {
 }))
 r.post('/campaigns', validate(z.object({
   name: z.string().trim().min(3).max(100), sponsor: z.string().trim().min(2).max(80), title: z.string().trim().min(3).max(100),
-  videoPublicId: z.string().regex(VIDEO_ID_RE), rewardKobo: z.number().int().positive(), advertiserRateKobo: z.number().int().positive(),
+  videoPublicId: z.string().regex(VIDEO_ID_RE), rewardKobo: z.number().int().positive(), advertiserRateKobo: z.number().int().positive().optional(),
+  // Set this to fund the campaign from the platform's own money (promotion). It goes live straight away.
+  platformBudgetKobo: z.number().int().positive().optional(),
 })), ah(async (req, res) => {
   const b = req.body
-  if (b.rewardKobo > b.advertiserRateKobo) throw httpError(400, 'Reward cannot exceed the advertiser rate per view.')
+  const platform = b.platformBudgetKobo !== undefined
+  if (!platform && b.advertiserRateKobo === undefined) throw httpError(400, 'Enter the advertiser rate per view.')
+  // Platform-funded: no advertiser markup, so every view costs exactly what the member is paid.
+  const rate = platform ? b.rewardKobo : b.advertiserRateKobo
+  if (b.rewardKobo > rate) throw httpError(400, 'Reward cannot exceed the advertiser rate per view.')
+  if (platform && b.platformBudgetKobo < rate) throw httpError(400, 'The budget must cover at least one view.')
   const v = await inspectVideo(b.videoPublicId)
   if (v.durationSec < 10 || v.durationSec > 120) throw httpError(400, 'Video must be between 10 and 120 seconds.')
-  const c = await Campaign.create({ ...b, videoUrl: v.url, durationSec: v.durationSec, status: 'PENDING_REVIEW', createdBy: req.user.email })
-  await audit(req.user.email, 'CAMPAIGN_CREATED', String(c._id))
+  const { platformBudgetKobo, ...rest } = b
+  const c = await Campaign.create(platform
+    ? { ...rest, advertiserRateKobo: rate, videoUrl: v.url, durationSec: v.durationSec, createdBy: req.user.email, fundingSource: 'PLATFORM',
+        budgetKobo: platformBudgetKobo, completionCap: Math.floor(platformBudgetKobo / rate), prepaymentRef: 'PLATFORM-FUNDS', status: 'ACTIVE', liveAt: new Date() }
+    : { ...rest, videoUrl: v.url, durationSec: v.durationSec, status: 'PENDING_REVIEW', createdBy: req.user.email })
+  await audit(req.user.email, platform ? 'CAMPAIGN_PLATFORM_FUNDED' : 'CAMPAIGN_CREATED', platform ? `${c._id} budget ${platformBudgetKobo} kobo, ${c.completionCap} views` : String(c._id))
   res.status(201).json({ campaign: c })
 }))
 // Record cleared advertiser money for an admin-created campaign, then it goes live.

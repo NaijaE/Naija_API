@@ -19,6 +19,8 @@ const campaignSchema = new Schema({
   completions: { type: Number, default: 0 },
   status: { type: String, enum: ['PENDING_REVIEW', 'AWAITING_VIDEO', 'CONTENT_REVIEW', 'ACTIVE', 'PAUSED', 'EXHAUSTED', 'CLOSED'], default: 'PENDING_REVIEW', index: true },
   prepaymentRef: String,
+  // ADVERTISER = paid for by an advertiser. PLATFORM = promotional campaign funded from the platform's own money.
+  fundingSource: { type: String, enum: ['ADVERTISER', 'PLATFORM'], default: 'ADVERTISER' },
   order: { type: Schema.Types.ObjectId, ref: 'Order' },
   packageId: String,
   liveAt: Date,
