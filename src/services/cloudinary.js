@@ -19,22 +19,44 @@ export function videoUploadSignature() {
     uploadUrl: `https://api.cloudinary.com/v1_1/${c.cloudName}/video/upload` }
 }
 
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// Cloudinary reports length in different places depending on the file; accept a number, "12.5" or "00:00:12".
+function toSeconds(v) {
+  if (v == null) return 0
+  if (typeof v === 'string' && v.includes(':')) return v.split(':').reduce((a, p) => a * 60 + (parseFloat(p) || 0), 0)
+  return Number(v) || 0
+}
+
 // We never trust a client-supplied URL or duration: read both from Cloudinary using the public id.
 export async function inspectVideo(publicId) {
   ready()
   if (!VIDEO_ID_RE.test(publicId)) throw httpError(400, 'Invalid video reference.')
-  let info
-  try { info = await cloudinary.api.resource(publicId, { resource_type: 'video' }) }
-  catch (e) {
-    const why = (e && e.error && e.error.message) || (e && e.message) || 'unknown'
-    console.error(`Cloudinary lookup failed for ${publicId}: ${why}`)
-    throw httpError(400, `Video not found. Upload it first.${config.isProd ? '' : ` (${why})`}`)
+  let info, seconds = 0
+  for (let attempt = 1; attempt <= 3 && !seconds; attempt++) {
+    try { info = await cloudinary.api.resource(publicId, { resource_type: 'video', media_metadata: true }) }
+    catch (e) {
+      const why = (e && e.error && e.error.message) || (e && e.message) || 'unknown'
+      console.error(`Cloudinary lookup failed for ${publicId}: ${why}`)
+      throw httpError(400, `Video not found. Upload it first.${config.isProd ? '' : ` (${why})`}`)
+    }
+    const meta = info.video_metadata || {}
+    seconds = toSeconds(info.duration) || toSeconds(info.video && info.video.duration) || toSeconds(meta.duration) || toSeconds(meta.Duration)
+    if (!seconds && attempt < 3) await wait(1500)
   }
-   const raw = info.duration ?? (info.video && info.video.duration) ?? 0
-  const durationSec = Math.ceil(Number(raw) || 0)
-  if (!durationSec) throw httpError(400, 'We could not read the length of this video. Wait a few seconds and try again, or upload an MP4 file.')
+  if (!seconds) {
+    console.error(`No duration for ${publicId}: ${JSON.stringify({ format: info.format, bytes: info.bytes, keys: Object.keys(info), video: info.video, metaKeys: Object.keys(info.video_metadata || {}) })}`)
+    throw httpError(400, 'We could not read the length of this video. Try another file, or wait a moment and try again.')
+  }
+  const durationSec = Math.ceil(seconds)
   if (durationSec < 10 || durationSec > 120) throw httpError(400, `Your video is ${durationSec} seconds long. It must be between 10 and 120 seconds.`)
-  return { url: cloudinary.url(publicId, { resource_type: 'video', secure: true }), durationSec }
+
+  // Serve every upload as MP4 (H.264/AAC) so it plays in all browsers, whatever format was uploaded.
+  // Cloudinary prepares the converted copy in the background; the first view may take a moment.
+  cloudinary.uploader.explicit(publicId, { resource_type: 'video', type: 'upload', eager: [{ format: 'mp4', video_codec: 'h264', audio_codec: 'aac' }], eager_async: true })
+    .catch((e) => console.error(`Could not prepare MP4 for ${publicId}: ${(e && e.message) || e}`))
+  const url = cloudinary.url(publicId, { resource_type: 'video', secure: true, format: 'mp4', transformation: [{ video_codec: 'h264', audio_codec: 'aac' }] })
+  return { url, durationSec }
 }
 
 // Used by the admin diagnostics check: confirms the three Cloudinary values are accepted.
