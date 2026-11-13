@@ -30,7 +30,11 @@ export async function inspectVideo(publicId) {
     console.error(`Cloudinary lookup failed for ${publicId}: ${why}`)
     throw httpError(400, `Video not found. Upload it first.${config.isProd ? '' : ` (${why})`}`)
   }
-  return { url: cloudinary.url(publicId, { resource_type: 'video', secure: true }), durationSec: Math.ceil(info.duration || 0) }
+   const raw = info.duration ?? (info.video && info.video.duration) ?? 0
+  const durationSec = Math.ceil(Number(raw) || 0)
+  if (!durationSec) throw httpError(400, 'We could not read the length of this video. Wait a few seconds and try again, or upload an MP4 file.')
+  if (durationSec < 10 || durationSec > 120) throw httpError(400, `Your video is ${durationSec} seconds long. It must be between 10 and 120 seconds.`)
+  return { url: cloudinary.url(publicId, { resource_type: 'video', secure: true }), durationSec }
 }
 
 // Used by the admin diagnostics check: confirms the three Cloudinary values are accepted.
