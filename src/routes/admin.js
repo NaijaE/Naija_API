@@ -186,6 +186,24 @@ r.patch('/campaigns/:id/status', validate(idParam, 'params'), validate(reasonBod
   res.json({ campaign: c })
 }))
 
+// Set a campaign's total budget. The view cap is recalculated from the per-view rate. It can never go below what is already used or watched.
+r.patch('/campaigns/:id/budget', validate(idParam, 'params'), validate(reasonBody.extend({ budgetKobo: z.number().int().positive() })), ah(async (req, res) => {
+  const OPEN = ['ACTIVE', 'PAUSED', 'CONTENT_REVIEW', 'AWAITING_VIDEO']
+  const { budgetKobo, reason } = req.body
+  const cur = await Campaign.findOne({ _id: req.params.id, status: { $in: OPEN } })
+  if (!cur) throw httpError(409, 'The budget of this campaign cannot be changed in its current status.')
+  const cap = Math.floor(budgetKobo / cur.advertiserRateKobo)
+  if (cap < 1) throw httpError(400, 'The budget is less than the cost of one view.')
+  if (budgetKobo < cur.consumedKobo) throw httpError(400, 'The budget cannot be less than what has already been used.')
+  if (cap < cur.completions) throw httpError(400, 'That budget allows fewer views than members have already watched.')
+  const c = await Campaign.findOneAndUpdate(
+    { _id: cur._id, status: { $in: OPEN }, advertiserRateKobo: cur.advertiserRateKobo, consumedKobo: { $lte: budgetKobo }, completions: { $lte: cap } },
+    { budgetKobo, completionCap: cap }, { new: true })
+  if (!c) throw httpError(409, 'The campaign changed while you were editing it. Please try again.')
+  await audit(req.user.email, 'CAMPAIGN_BUDGET_CHANGED', `${c._id}: ${cur.budgetKobo} -> ${budgetKobo} kobo, view cap ${cur.completionCap} -> ${cap}. ${reason}`)
+  res.json({ campaign: c })
+}))
+
 // ---------- withdrawals ----------
 r.get('/withdrawals', validate(page, 'query'), ah(async (req, res) => {
   const q = req.query.status ? { status: req.query.status } : {}
