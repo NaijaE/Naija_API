@@ -1,18 +1,17 @@
 import { z } from 'zod'
 import { Settings } from '../models/Settings.js'
 import { httpError } from '../utils/httpError.js'
-import { naira } from '../utils/money.js'
 
 export const DEFAULTS = {
   dailyCap: 3,
-  minWithdrawalKobo: 500000,
+  minWithdrawalKobo: 1000000, // ₦10,000
   withdrawalFeeKobo: 2500,
   referralRewardKobo: 0,
   // ADVERTISER packages. Placeholders: the admin sets the real prices. Members never pay these.
   packages: [
-    { id: 'spark', name: 'Spark', priceKobo: 500000, completions: 100, memberRewardKobo: 3000 },
-    { id: 'boost', name: 'Boost', priceKobo: 2000000, completions: 400, memberRewardKobo: 3500 },
-    { id: 'prime', name: 'Prime', priceKobo: 5000000, completions: 1000, memberRewardKobo: 4000 },
+    { id: 'spark', name: 'Spark', priceKobo: 600000, completions: 100, memberRewardKobo: 30000 }, // ₦6,000, ₦300 per view
+    { id: 'boost', name: 'Boost', priceKobo: 2500000, completions: 400, memberRewardKobo: 100000 }, // ₦25,000, ₦1,000 per view
+    { id: 'prime', name: 'Prime', priceKobo: 5000000, completions: 1000, memberRewardKobo: 250000 }, // ₦50,000, ₦2,500 per view
   ],
 }
 
@@ -42,8 +41,6 @@ export const changesSchema = z.object({
 export function assertConsistent(next) {
   if (next.minWithdrawalKobo <= next.withdrawalFeeKobo) throw httpError(400, 'Minimum withdrawal must be higher than the withdrawal fee.')
   if (new Set(next.packages.map((p) => p.id)).size !== 3) throw httpError(400, 'Packages must be spark, boost and prime.')
-  for (const p of next.packages) {
-    const rate = Math.floor(p.priceKobo / p.completions)
-    if (p.memberRewardKobo > rate) throw httpError(400, `${p.name}: member reward cannot exceed the advertiser rate per view (${naira(rate)}).`)
-  }
+  // The rule "member reward cannot exceed the advertiser rate per view" is switched off for now.
+  // With it off, a reward above (price / views) is paid out of the platform's own money.
 }

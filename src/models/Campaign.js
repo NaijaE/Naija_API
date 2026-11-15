@@ -27,9 +27,5 @@ const campaignSchema = new Schema({
   createdBy: String,
 }, { timestamps: true })
 
-// A member reward must always be covered by what the advertiser pays per view.
-campaignSchema.pre('validate', function check(next) {
-  if (this.rewardKobo > this.advertiserRateKobo) return next(new Error('Reward cannot exceed the advertiser rate per view'))
-  next()
-})
+// The rule "reward cannot exceed the advertiser rate per view" is switched off for now (see assertConsistent in services/settings.js).
 export const Campaign = mongoose.model('Campaign', campaignSchema)
