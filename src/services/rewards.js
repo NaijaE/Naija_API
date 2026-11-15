@@ -3,6 +3,7 @@ import { Campaign } from '../models/Campaign.js'
 import { DailyCounter } from '../models/DailyCounter.js'
 import { Ledger } from '../models/Ledger.js'
 import { User } from '../models/User.js'
+import { Order } from '../models/Order.js'
 import { httpError } from '../utils/httpError.js'
 import { withTxn } from '../utils/txn.js'
 import { lagosDay } from '../utils/dates.js'
@@ -25,8 +26,16 @@ export async function watchedToday(userId) {
   return row ? row.count : 0
 }
 
+// Only members with at least one paid advertising package can earn from videos.
+// A package whose video was rejected and is waiting for a refund does not count.
+export const NO_PACKAGE_MESSAGE = 'Only members with an advertising package can earn from videos. Buy a package to start earning.'
+export async function hasPackage(userId) {
+  return Boolean(await Order.exists({ user: userId, status: 'PAID', refundDue: { $ne: true } }))
+}
+
 export async function startView(user, campaignId) {
   const cfg = await getSettings()
+  if (!(await hasPackage(user._id))) throw httpError(403, NO_PACKAGE_MESSAGE)
   if ((await watchedToday(user._id)) >= cfg.dailyCap) throw httpError(429, `You have reached today's limit of ${cfg.dailyCap} videos. It resets at midnight (Africa/Lagos).`)
   await ViewSession.updateMany({ user: user._id, status: 'STARTED', startedAt: { $lt: new Date(Date.now() - STALE_MS) } }, { status: 'EXPIRED' })
 
@@ -46,6 +55,7 @@ export async function startView(user, campaignId) {
 
 export async function completeView(user, sessionId) {
   const cfg = await getSettings()
+  if (!(await hasPackage(user._id))) throw httpError(403, NO_PACKAGE_MESSAGE)
   return withTxn(async (session) => {
     const vs = await ViewSession.findOne({ _id: sessionId, user: user._id, status: 'STARTED' }).session(session)
     if (!vs) throw httpError(404, 'Session not found or already finished.')
