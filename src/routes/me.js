@@ -1,4 +1,6 @@
 import { Router } from 'express'
+import { z } from 'zod'
+import bcrypt from 'bcryptjs'
 import { User, publicUser } from '../models/User.js'
 import { Order } from '../models/Order.js'
 import { Ledger } from '../models/Ledger.js'
@@ -8,11 +10,25 @@ import { requireAuth, requireMember, requireVerified } from '../middleware/auth.
 import { lagosDay } from '../utils/dates.js'
 import { getSettings } from '../services/settings.js'
 import { watchedToday } from '../services/rewards.js'
+import { deleteAccount } from '../services/accountDeletion.js'
+import { validate } from '../middleware/validate.js'
+import { httpError } from '../utils/httpError.js'
+import { byUser, MIN } from '../middleware/limits.js'
 
 const r = Router()
 r.use(requireAuth)
 
 r.get('/', (req, res) => res.json({ user: publicUser(req.user) }))
+
+// Delete my own account (members and admins). Needs the password and the typed word DELETE.
+r.post('/delete', byUser(15 * MIN, 5), validate(z.object({
+  password: z.string().min(1).max(72), confirm: z.literal('DELETE'), forfeitBalance: z.boolean().optional(),
+})), ah(async (req, res) => {
+  const u = await User.findById(req.user._id).select('+passwordHash')
+  if (!(await bcrypt.compare(req.body.password, u.passwordHash))) throw httpError(400, 'Your password is incorrect.')
+  const out = await deleteAccount(u._id, { forfeitBalance: req.body.forfeitBalance === true })
+  res.json({ ok: true, forfeitedKobo: out.forfeitedKobo })
+}))
 
 r.get('/dashboard', requireVerified, requireMember, ah(async (req, res) => {
   const uid = req.user._id

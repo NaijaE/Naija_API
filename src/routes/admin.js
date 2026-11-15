@@ -23,6 +23,7 @@ import { runReconcile } from '../jobs/reconcile.js'
 import { sendEmail, sendSms } from '../services/notify.js'
 import { normalizePhone } from '../utils/codes.js'
 import { byUser, MIN } from '../middleware/limits.js'
+import { deleteAccount } from '../services/accountDeletion.js'
 
 const r = Router()
 r.use(requireAuth, requireAdmin)
@@ -36,7 +37,7 @@ const page = z.object({ page: z.coerce.number().int().min(1).default(1), status:
 r.get('/overview', ah(async (_req, res) => {
   const since = lagosDay(new Date(Date.now() - 6 * 86400000))
   const [users, deposits, pendingDeposits, pendingWd, paidOut, camps, active, watched, budget, liability, pendingProposals] = await Promise.all([
-    User.countDocuments({ role: 'MEMBER' }),
+    User.countDocuments({ role: 'MEMBER', status: { $ne: 'DELETED' } }),
     Order.aggregate([{ $match: { status: 'PAID' } }, { $group: { _id: null, t: { $sum: '$priceKobo' } } }]),
     Order.countDocuments({ status: 'PENDING_REVIEW' }),
     Withdrawal.aggregate([{ $match: { status: { $in: ['PENDING', 'APPROVED'] } } }, { $group: { _id: null, n: { $sum: 1 }, t: { $sum: '$amountKobo' } } }]),
@@ -63,7 +64,7 @@ r.get('/overview', ah(async (_req, res) => {
 // ---------- users ----------
 r.get('/users', validate(page, 'query'), ah(async (req, res) => {
   const { page: p, search } = req.query
-  const q = { role: 'MEMBER', ...(search ? { $or: [{ name: new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }, { email: new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }] } : {}) }
+  const q = { role: 'MEMBER', status: { $ne: 'DELETED' }, ...(search ? { $or: [{ name: new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }, { email: new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }] } : {}) }
   const [users, total] = await Promise.all([User.find(q).sort({ createdAt: -1 }).skip((p - 1) * 50).limit(50).lean(), User.countDocuments(q)])
   const dep = await Order.aggregate([{ $match: { status: 'PAID', user: { $in: users.map((u) => u._id) } } }, { $group: { _id: '$user', t: { $sum: '$priceKobo' } } }])
   const depMap = Object.fromEntries(dep.map((d) => [String(d._id), d.t]))
@@ -71,10 +72,18 @@ r.get('/users', validate(page, 'query'), ah(async (req, res) => {
     balanceKobo: u.balanceKobo, totalDepositsKobo: depMap[String(u._id)] || 0, createdAt: u.createdAt })) })
 }))
 r.patch('/users/:id/status', validate(idParam, 'params'), validate(reasonBody.extend({ status: z.enum(['ACTIVE', 'SUSPENDED']) })), ah(async (req, res) => {
-  const u = await User.findOneAndUpdate({ _id: req.params.id, role: 'MEMBER' }, { status: req.body.status, $inc: { tokenVersion: req.body.status === 'SUSPENDED' ? 1 : 0 } }, { new: true })
+  const u = await User.findOneAndUpdate({ _id: req.params.id, role: 'MEMBER', status: { $ne: 'DELETED' } }, { status: req.body.status, $inc: { tokenVersion: req.body.status === 'SUSPENDED' ? 1 : 0 } }, { new: true })
   if (!u) throw httpError(404, 'User not found.')
   await audit(req.user.email, `USER_${req.body.status}`, `${u.email}: ${req.body.reason}`)
   res.json({ ok: true })
+}))
+
+// Permanently delete a member's account (their details are removed; money records are kept).
+r.post('/users/:id/delete', validate(idParam, 'params'), validate(reasonBody.extend({ forfeitBalance: z.boolean().optional() })), ah(async (req, res) => {
+  const u = await User.findOne({ _id: req.params.id, role: 'MEMBER' }).select('_id')
+  if (!u) throw httpError(404, 'Member not found.')
+  const out = await deleteAccount(u._id, { actor: req.user.email, byAdmin: true, forfeitBalance: req.body.forfeitBalance === true, reason: req.body.reason })
+  res.json({ ok: true, forfeitedKobo: out.forfeitedKobo })
 }))
 
 // ---------- deposits ----------
