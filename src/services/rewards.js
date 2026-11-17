@@ -16,9 +16,9 @@ const hasBudget = { $expr: { $and: [
 ] } }
 export const liveFilter = { status: 'ACTIVE', ...hasBudget }
 
-export async function credit(session, { userId, type, amountKobo, campaign, sessionId, note }) {
+export async function credit(session, { userId, type, amountKobo, campaign, sessionId, referred, note }) {
   await User.updateOne({ _id: userId }, { $inc: { balanceKobo: amountKobo } }, { session })
-  await Ledger.create([{ user: userId, type, amountKobo, campaign, session: sessionId, lagosDay: lagosDay(), note }], { session })
+  await Ledger.create([{ user: userId, type, amountKobo, campaign, session: sessionId, referred, lagosDay: lagosDay(), note }], { session })
 }
 
 export async function watchedToday(userId) {

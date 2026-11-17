@@ -8,6 +8,7 @@ const ledgerSchema = new Schema({
   campaign: { type: Schema.Types.ObjectId, ref: 'Campaign' },
   session: { type: Schema.Types.ObjectId, ref: 'ViewSession' },
   withdrawal: { type: Schema.Types.ObjectId, ref: 'Withdrawal' },
+  referred: { type: Schema.Types.ObjectId, ref: 'User' }, // for REFERRAL_REWARD: the member who verified
   lagosDay: String,
   note: String,
 }, { timestamps: true })
