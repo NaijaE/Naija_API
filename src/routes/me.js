@@ -9,7 +9,8 @@ import { ah } from '../utils/asyncHandler.js'
 import { requireAuth, requireMember, requireVerified } from '../middleware/auth.js'
 import { lagosDay } from '../utils/dates.js'
 import { getSettings } from '../services/settings.js'
-import { watchedToday } from '../services/rewards.js'
+import { watchedToday, hasPackage } from '../services/rewards.js'
+import { REFERRALS_REQUIRED } from '../services/withdrawals.js'
 import { deleteAccount } from '../services/accountDeletion.js'
 import { validate } from '../middleware/validate.js'
 import { httpError } from '../utils/httpError.js'
@@ -34,10 +35,11 @@ r.get('/dashboard', requireVerified, requireMember, ah(async (req, res) => {
   const uid = req.user._id
   const cfg = await getSettings()
   const day = lagosDay()
-  const [today, refEarn, refCount, deposits, withdrawals, paid, recent, watched] = await Promise.all([
+  const [today, refEarn, refCount, refPaid, deposits, withdrawals, paid, recent, watched] = await Promise.all([
     Ledger.aggregate([{ $match: { user: uid, lagosDay: day, type: { $in: ['VIDEO_REWARD', 'REFERRAL_REWARD'] } } }, { $group: { _id: null, t: { $sum: '$amountKobo' } } }]),
     Ledger.aggregate([{ $match: { user: uid, type: 'REFERRAL_REWARD' } }, { $group: { _id: null, t: { $sum: '$amountKobo' } } }]),
     User.countDocuments({ referredBy: uid, emailVerified: true, phoneVerified: true }),
+    User.countDocuments({ referredBy: uid, referralBonusPaid: true }),
     Order.find({ user: uid }).sort({ createdAt: -1 }).limit(20).select('-proof -videoPublicId').lean(),
     Withdrawal.find({ user: uid }).sort({ createdAt: -1 }).limit(20).lean(),
     Order.exists({ user: uid, status: 'PAID' }),
@@ -50,6 +52,8 @@ r.get('/dashboard', requireVerified, requireMember, ah(async (req, res) => {
     todayEarningsKobo: today[0]?.t || 0,
     referralEarningsKobo: refEarn[0]?.t || 0,
     verifiedReferrals: refCount,
+    referralsRequiredToWithdraw: paid && (await hasPackage(uid)) ? REFERRALS_REQUIRED : 0,
+    referralsWithPackage: refPaid, referralBonusKobo: cfg.referralRewardKobo,
     watchedToday: watched, dailyCap: cfg.dailyCap, minWithdrawalKobo: cfg.minWithdrawalKobo,
     advertiserStatus: paid ? 'SUBSCRIBED' : 'FREE',
     deposits, withdrawals, recentActivity: recent,

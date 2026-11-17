@@ -4,6 +4,8 @@ import { audit } from '../models/AuditLog.js'
 import { User } from '../models/User.js'
 import { withTxn } from '../utils/txn.js'
 import { naira } from '../utils/money.js'
+import { getSettings } from './settings.js'
+import { credit } from './rewards.js'
 import { verifyPaystack, verifyFlutterwave } from './payments.js'
 
 // Marks an order PAID exactly once and creates the funded campaign (waiting for content review).
@@ -27,6 +29,18 @@ export async function settleOrder(orderId, { ref, actor, fromStatuses }) {
     }], { session })
     o.campaign = c._id
     await o.save({ session })
+
+    // Referral bonus: paid once, the first time a referred member's package is confirmed paid.
+    // It is credited to the referrer's balance and ledger, so it shows on their dashboard straight away.
+    const cfg = await getSettings()
+    if (cfg.referralRewardKobo > 0 && buyer && buyer.referredBy) {
+      const flagged = await User.updateOne({ _id: buyer._id, referralBonusPaid: false }, { referralBonusPaid: true }, { session })
+      const referrer = flagged.modifiedCount ? await User.findOne({ _id: buyer.referredBy, status: 'ACTIVE' }).session(session) : null
+      if (referrer) {
+        await credit(session, { userId: referrer._id, type: 'REFERRAL_REWARD', amountKobo: cfg.referralRewardKobo, campaign: c._id,
+          note: `Referral bonus: ${buyer.name} bought the ${o.packageName} package` })
+      }
+    }
     await audit(actor, 'DEPOSIT_CONFIRMED', `${o._id} ${naira(o.priceKobo)} via ${o.method} ref ${ref}`, session)
     return { settled: true, order: o }
   })

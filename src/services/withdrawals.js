@@ -7,9 +7,18 @@ import { withTxn } from '../utils/txn.js'
 import { lagosDay } from '../utils/dates.js'
 import { naira } from '../utils/money.js'
 import { getSettings } from './settings.js'
+import { hasPackage } from './rewards.js'
+
+// Members with a package must have this many verified referrals before they can withdraw.
+export const REFERRALS_REQUIRED = 3
+export const verifiedReferralCount = (userId) => User.countDocuments({ referredBy: userId, emailVerified: true, phoneVerified: true })
 
 export async function requestWithdrawal(user, { amountKobo, bankName, accountName, accountNumber }) {
   const cfg = await getSettings()
+  if (await hasPackage(user._id)) {
+    const n = await verifiedReferralCount(user._id)
+    if (n < REFERRALS_REQUIRED) throw httpError(403, `To withdraw, you need ${REFERRALS_REQUIRED} verified referrals. You have ${n}.`)
+  }
   if (amountKobo < cfg.minWithdrawalKobo) throw httpError(400, `Minimum withdrawal is ${naira(cfg.minWithdrawalKobo)}.`)
   if (amountKobo <= cfg.withdrawalFeeKobo) throw httpError(400, 'Amount must be higher than the withdrawal fee.')
   if (await Withdrawal.exists({ user: user._id, status: { $in: ['PENDING', 'APPROVED'] } })) throw httpError(409, 'You already have a withdrawal in progress.')

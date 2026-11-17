@@ -16,7 +16,7 @@ const hasBudget = { $expr: { $and: [
 ] } }
 export const liveFilter = { status: 'ACTIVE', ...hasBudget }
 
-async function credit(session, { userId, type, amountKobo, campaign, sessionId, note }) {
+export async function credit(session, { userId, type, amountKobo, campaign, sessionId, note }) {
   await User.updateOne({ _id: userId }, { $inc: { balanceKobo: amountKobo } }, { session })
   await Ledger.create([{ user: userId, type, amountKobo, campaign, session: sessionId, lagosDay: lagosDay(), note }], { session })
 }
@@ -33,14 +33,26 @@ export async function hasPackage(userId) {
   return Boolean(await Order.exists({ user: userId, status: 'PAID', refundDue: { $ne: true } }))
 }
 
+// A member only earns from videos of the package tiers they own (spark, boost, prime).
+// Every campaign now carries a tier. A campaign with no tier (old data) is hidden until an admin assigns one.
+export const WRONG_PACKAGE_MESSAGE = 'This video belongs to a different package. You can only earn from videos of the package you bought.'
+export async function memberPackageIds(userId) {
+  return Order.distinct('packageId', { user: userId, status: 'PAID', refundDue: { $ne: true } })
+}
+export const packageFilter = (ids) => ({ packageId: { $in: ids } })
+
 export async function startView(user, campaignId) {
   const cfg = await getSettings()
   if (!(await hasPackage(user._id))) throw httpError(403, NO_PACKAGE_MESSAGE)
   if ((await watchedToday(user._id)) >= cfg.dailyCap) throw httpError(429, `You have reached today's limit of ${cfg.dailyCap} videos. It resets at midnight (Africa/Lagos).`)
   await ViewSession.updateMany({ user: user._id, status: 'STARTED', startedAt: { $lt: new Date(Date.now() - STALE_MS) } }, { status: 'EXPIRED' })
 
-  const campaign = await Campaign.findOne({ _id: campaignId, ...liveFilter })
-  if (!campaign) throw httpError(404, 'This video is not available.')
+  const ids = await memberPackageIds(user._id)
+  const campaign = await Campaign.findOne({ _id: campaignId, ...liveFilter, ...packageFilter(ids) })
+  if (!campaign) {
+    if (await Campaign.exists({ _id: campaignId, ...liveFilter })) throw httpError(403, WRONG_PACKAGE_MESSAGE)
+    throw httpError(404, 'This video is not available.')
+  }
   if (await ViewSession.exists({ user: user._id, campaign: campaign._id, status: 'COMPLETED' })) throw httpError(409, 'You have already watched this video.')
 
   let vs = await ViewSession.findOne({ user: user._id, status: 'STARTED' })
@@ -60,6 +72,7 @@ export async function completeView(user, sessionId) {
     const vs = await ViewSession.findOne({ _id: sessionId, user: user._id, status: 'STARTED' }).session(session)
     if (!vs) throw httpError(404, 'Session not found or already finished.')
     const camp = await Campaign.findById(vs.campaign).session(session)
+    if (!camp.packageId || !(await memberPackageIds(user._id)).includes(camp.packageId)) throw httpError(403, WRONG_PACKAGE_MESSAGE)
     const elapsed = (Date.now() - vs.startedAt.getTime()) / 1000
     if (elapsed < camp.durationSec - 1) throw httpError(400, 'The video has not played to the end yet.')
     if (elapsed > STALE_MS / 1000) throw httpError(410, 'This session expired. Start the video again.')
@@ -84,16 +97,6 @@ export async function completeView(user, sessionId) {
     await vs.save({ session })
     await credit(session, { userId: user._id, type: 'VIDEO_REWARD', amountKobo: c.rewardKobo, campaign: c._id, sessionId: vs._id, note: `${c.name || c.title} (${c.sponsor})` })
 
-    // Optional referral bonus: once, from the campaign margin only (rate minus member reward).
-    let bonus = 0
-    if (cfg.referralRewardKobo > 0 && user.referredBy && c.advertiserRateKobo - c.rewardKobo >= cfg.referralRewardKobo) {
-      const flagged = await User.updateOne({ _id: user._id, referralBonusPaid: false }, { referralBonusPaid: true }, { session })
-      const referrer = flagged.modifiedCount ? await User.findOne({ _id: user.referredBy, status: 'ACTIVE' }).session(session) : null
-      if (referrer) {
-        bonus = cfg.referralRewardKobo
-        await credit(session, { userId: referrer._id, type: 'REFERRAL_REWARD', amountKobo: bonus, campaign: c._id, sessionId: vs._id, note: `Referral bonus: ${user.name} completed a first video` })
-      }
-    }
-    return { rewardKobo: c.rewardKobo, referralBonusPaidKobo: bonus }
+    return { rewardKobo: c.rewardKobo }
   })
 }

@@ -7,7 +7,7 @@ import { ah } from '../utils/asyncHandler.js'
 import { httpError } from '../utils/httpError.js'
 import { validate } from '../middleware/validate.js'
 import { requireAuth, requireMember, requireVerified } from '../middleware/auth.js'
-import { liveFilter, startView, completeView, watchedToday, hasPackage } from '../services/rewards.js'
+import { liveFilter, startView, completeView, watchedToday, hasPackage, memberPackageIds, packageFilter } from '../services/rewards.js'
 import { getSettings } from '../services/settings.js'
 
 const r = Router()
@@ -33,16 +33,17 @@ r.use(requireAuth, requireVerified, requireMember)
 
 // Today's list of funded, approved videos. The video URL is only handed out when a view starts.
 r.get('/', ah(async (req, res) => {
-  const [cfg, watched, camps, done, canEarn] = await Promise.all([
-    getSettings(), watchedToday(req.user._id),
-    Campaign.find(liveFilter).sort({ liveAt: -1 }).select('title sponsor durationSec rewardKobo liveAt').lean(),
+  const [cfg, watched, packageIds, done, canEarn] = await Promise.all([
+    getSettings(), watchedToday(req.user._id), memberPackageIds(req.user._id),
     ViewSession.find({ user: req.user._id, status: 'COMPLETED' }).select('campaign').lean(),
     hasPackage(req.user._id),
   ])
+  // Members with a package only see (and can only earn from) videos of their own package tiers.
+  const camps = await Campaign.find(canEarn ? { ...liveFilter, ...packageFilter(packageIds) } : liveFilter).sort({ liveAt: -1 }).select('title sponsor durationSec rewardKobo liveAt').lean()
   const seen = new Set(done.map((d) => String(d.campaign)))
   res.set('Cache-Control', 'no-store')
   res.json({
-    canEarn, watchedToday: watched, dailyCap: cfg.dailyCap, remainingToday: Math.max(0, cfg.dailyCap - watched),
+    canEarn, packages: packageIds, watchedToday: watched, dailyCap: cfg.dailyCap, remainingToday: Math.max(0, cfg.dailyCap - watched),
     // Random order each time; videos the member has not watched yet come first.
     videos: (() => {
       const all = camps.map((c) => ({ id: c._id, title: c.title, sponsor: c.sponsor, durationSec: c.durationSec, rewardKobo: c.rewardKobo, liveAt: c.liveAt, watched: seen.has(String(c._id)) }))

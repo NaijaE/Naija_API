@@ -114,11 +114,16 @@ r.get('/campaigns', validate(page, 'query'), ah(async (req, res) => {
 }))
 r.post('/campaigns', validate(z.object({
   name: z.string().trim().min(3).max(100), sponsor: z.string().trim().min(2).max(80), title: z.string().trim().min(3).max(100),
-  videoPublicId: z.string().regex(VIDEO_ID_RE), rewardKobo: z.number().int().positive(), advertiserRateKobo: z.number().int().positive().optional(),
+  videoPublicId: z.string().regex(VIDEO_ID_RE), packageId: z.enum(['spark', 'boost', 'prime']),
+  rewardKobo: z.number().int().positive().optional(), advertiserRateKobo: z.number().int().positive().optional(),
   // Set this to fund the campaign from the platform's own money (promotion). It goes live straight away.
   platformBudgetKobo: z.number().int().positive().optional(),
 })), ah(async (req, res) => {
-  const b = req.body
+  const cfg = await getSettings()
+  const pkg = cfg.packages.find((p) => p.id === req.body.packageId)
+  if (!pkg) throw httpError(400, 'Unknown package.')
+  // The reward always equals the tier's member reward, so a Spark member earns the Spark amount on every video.
+  const b = { ...req.body, rewardKobo: pkg.memberRewardKobo }
   const platform = b.platformBudgetKobo !== undefined
   if (!platform && b.advertiserRateKobo === undefined) throw httpError(400, 'Enter the advertiser rate per view.')
   // Platform-funded: no advertiser markup, so every view costs exactly what the member is paid.
@@ -134,6 +139,19 @@ r.post('/campaigns', validate(z.object({
     : { ...rest, videoUrl: v.url, durationSec: v.durationSec, status: 'PENDING_REVIEW', createdBy: req.user.email })
   await audit(req.user.email, platform ? 'CAMPAIGN_PLATFORM_FUNDED' : 'CAMPAIGN_CREATED', platform ? `${c._id} budget ${platformBudgetKobo} kobo, ${c.completionCap} views` : String(c._id))
   res.status(201).json({ campaign: c })
+}))
+// Give an older admin-created campaign (one with no package tier) a tier. Members then only see it if they own that tier,
+// and the reward becomes that tier's member reward. Package-order campaigns already have a tier and cannot be changed here.
+r.post('/campaigns/:id/package', validate(idParam, 'params'), validate(z.object({ packageId: z.enum(['spark', 'boost', 'prime']) })), ah(async (req, res) => {
+  const pkg = (await getSettings()).packages.find((p) => p.id === req.body.packageId)
+  if (!pkg) throw httpError(400, 'Unknown package.')
+  const c = await Campaign.findOne({ _id: req.params.id, packageId: { $in: [null, ''] } })
+  if (!c) throw httpError(409, 'This campaign already has a package tier.')
+  c.packageId = pkg.id; c.rewardKobo = pkg.memberRewardKobo
+  if (c.fundingSource === 'PLATFORM') c.advertiserRateKobo = pkg.memberRewardKobo // platform-funded: every view costs exactly the member reward
+  await c.save()
+  await audit(req.user.email, 'CAMPAIGN_PACKAGE_SET', `${c._id} ${pkg.id}`)
+  res.json({ campaign: c })
 }))
 // Record cleared advertiser money for an admin-created campaign, then it goes live.
 r.post('/campaigns/:id/fund', validate(idParam, 'params'), validate(z.object({ amountKobo: z.number().int().positive(), reference: z.string().trim().min(3).max(100) })), ah(async (req, res) => {
