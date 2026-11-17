@@ -8,7 +8,7 @@ import { Withdrawal } from '../models/Withdrawal.js'
 import { ah } from '../utils/asyncHandler.js'
 import { requireAuth, requireMember, requireVerified } from '../middleware/auth.js'
 import { lagosDay } from '../utils/dates.js'
-import { getSettings } from '../services/settings.js'
+import { getSettings, referralRewardsByPackage } from '../services/settings.js'
 import { watchedToday } from '../services/rewards.js'
 import { REFERRALS_REQUIRED } from '../services/withdrawals.js'
 import { deleteAccount } from '../services/accountDeletion.js'
@@ -65,7 +65,7 @@ r.get('/dashboard', requireVerified, requireMember, ah(async (req, res) => {
     verifiedReferrals: refCount,
     referralsRequiredToWithdraw: REFERRALS_REQUIRED,
     referrals: referralRows,
-    referralsWithPackage: refPaid, referralBonusKobo: cfg.referralRewardKobo,
+    referralsWithPackage: refPaid, referralRewards: referralRewardsByPackage(cfg),
     watchedToday: watched, dailyCap: cfg.dailyCap, minWithdrawalKobo: cfg.minWithdrawalKobo,
     advertiserStatus: paid ? 'SUBSCRIBED' : 'FREE',
     deposits, withdrawals, recentActivity: recent,
@@ -76,7 +76,7 @@ r.get('/referrals', requireVerified, requireMember, ah(async (req, res) => {
   const referred = await referralList(req.user._id)
   const cfg = await getSettings()
   res.json({
-    code: req.user.referralCode, bonusKobo: cfg.referralRewardKobo,
+    code: req.user.referralCode, referralRewards: referralRewardsByPackage(cfg),
     referred, requiredToWithdraw: REFERRALS_REQUIRED,
   })
 }))

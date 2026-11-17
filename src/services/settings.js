@@ -2,6 +2,11 @@ import { z } from 'zod'
 import { Settings } from '../models/Settings.js'
 import { httpError } from '../utils/httpError.js'
 
+// What a referrer earns when someone they invited buys each package. Used whenever a package has no value saved yet.
+export const DEFAULT_REFERRAL_REWARD_KOBO = { spark: 300000, boost: 500000, prime: 1500000 } // ₦3,000, ₦5,000, ₦15,000
+export const packageReferralReward = (p) => (p && Number.isInteger(p.referralRewardKobo) ? p.referralRewardKobo : DEFAULT_REFERRAL_REWARD_KOBO[p && p.id] || 0)
+export const referralRewardsByPackage = (cfg) => Object.fromEntries(cfg.packages.map((p) => [p.id, packageReferralReward(p)]))
+
 export const DEFAULTS = {
   dailyCap: 3,
   minWithdrawalKobo: 1000000, // ₦10,000
@@ -9,9 +14,9 @@ export const DEFAULTS = {
   referralRewardKobo: 0,
   // ADVERTISER packages. Placeholders: the admin sets the real prices. Members never pay these.
   packages: [
-    { id: 'spark', name: 'Spark', priceKobo: 600000, completions: 100, memberRewardKobo: 30000 }, // ₦6,000, ₦300 per view
-    { id: 'boost', name: 'Boost', priceKobo: 2500000, completions: 400, memberRewardKobo: 100000 }, // ₦25,000, ₦1,000 per view
-    { id: 'prime', name: 'Prime', priceKobo: 5000000, completions: 1000, memberRewardKobo: 250000 }, // ₦50,000, ₦2,500 per view
+    { id: 'spark', name: 'Spark', priceKobo: 600000, completions: 100, memberRewardKobo: 30000, referralRewardKobo: 300000 }, // ₦6,000, ₦300 per view
+    { id: 'boost', name: 'Boost', priceKobo: 2500000, completions: 400, memberRewardKobo: 100000, referralRewardKobo: 500000 }, // ₦25,000, ₦1,000 per view
+    { id: 'prime', name: 'Prime', priceKobo: 5000000, completions: 1000, memberRewardKobo: 250000, referralRewardKobo: 1500000 }, // ₦50,000, ₦2,500 per view
   ],
 }
 
@@ -29,7 +34,7 @@ export async function ensureSettings() {
 export const getSettings = async () => (await Settings.findOne().sort({ version: -1 }).lean()) || ensureSettings()
 
 const int = z.number().int()
-const pkgSchema = z.object({ id: z.enum(['spark', 'boost', 'prime']), name: z.string().min(2).max(20), priceKobo: int.positive(), completions: int.min(1), memberRewardKobo: int.positive() })
+const pkgSchema = z.object({ id: z.enum(['spark', 'boost', 'prime']), name: z.string().min(2).max(20), priceKobo: int.positive(), completions: int.min(1), memberRewardKobo: int.positive(), referralRewardKobo: int.min(0).optional() })
 export const changesSchema = z.object({
   dailyCap: int.min(1).max(20),
   minWithdrawalKobo: int.min(100),

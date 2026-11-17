@@ -11,7 +11,6 @@ import { requireAuth, signToken } from '../middleware/auth.js'
 import { sixDigits, hashCode, codeMatches, referralCode, normalizePhone } from '../utils/codes.js'
 import { sendEmail, sendSms } from '../services/notify.js'
 import { config } from '../config.js'
-import { payReferralBonus } from '../services/referrals.js'
 
 const r = Router()
 // Per-route limits. Failed attempts count; successful logins do not.
@@ -84,7 +83,6 @@ r.post('/verify', requireAuth, ...verifyLimit, validate(z.object({ emailCode: z.
   if (bad) { u.codeAttempts += 1; await u.save(); throw httpError(400, `The ${bad} code is incorrect.`) }
   u.emailVerified = true; u.phoneVerified = true; u.emailCodeHash = undefined; u.phoneCodeHash = undefined
   await u.save()
-  await payReferralBonus(u) // the referrer is paid now that this member is fully verified
   res.json({ user: publicUser(u) })
 }))
 

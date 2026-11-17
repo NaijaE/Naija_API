@@ -1,7 +1,7 @@
 import mongoose from 'mongoose'
 const { Schema } = mongoose
 
-const pkg = new Schema({ id: String, name: String, priceKobo: Number, completions: Number, memberRewardKobo: Number }, { _id: false })
+const pkg = new Schema({ id: String, name: String, priceKobo: Number, completions: Number, memberRewardKobo: Number, referralRewardKobo: Number }, { _id: false })
 // Immutable, versioned configuration. The newest version is the live one.
 const settingsSchema = new Schema({
   version: { type: Number, required: true, unique: true },

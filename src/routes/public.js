@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { ah } from '../utils/asyncHandler.js'
-import { getSettings } from '../services/settings.js'
+import { getSettings, packageReferralReward } from '../services/settings.js'
 import { config } from '../config.js'
 
 const r = Router()
@@ -9,7 +9,7 @@ r.get('/config', ah(async (_req, res) => {
   const s = await getSettings()
   res.json({
     dailyCap: s.dailyCap, minWithdrawalKobo: s.minWithdrawalKobo, withdrawalFeeKobo: s.withdrawalFeeKobo, referralRewardKobo: s.referralRewardKobo,
-    packages: s.packages.map((p) => ({ ...p, advertiserRateKobo: Math.floor(p.priceKobo / p.completions) })),
+    packages: s.packages.map((p) => ({ ...p, referralRewardKobo: packageReferralReward(p), advertiserRateKobo: Math.floor(p.priceKobo / p.completions) })),
     bank: config.bank,
   })
 }))

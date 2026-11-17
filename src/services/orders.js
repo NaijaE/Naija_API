@@ -4,6 +4,7 @@ import { audit } from '../models/AuditLog.js'
 import { User } from '../models/User.js'
 import { withTxn } from '../utils/txn.js'
 import { naira } from '../utils/money.js'
+import { payReferralBonus } from './referrals.js'
 import { verifyPaystack, verifyFlutterwave } from './payments.js'
 
 // Marks an order PAID exactly once and creates the funded campaign (waiting for content review).
@@ -27,6 +28,7 @@ export async function settleOrder(orderId, { ref, actor, fromStatuses }) {
     }], { session })
     o.campaign = c._id
     await o.save({ session })
+    await payReferralBonus(buyer, o.packageId, session) // the referrer earns this package's referral reward
 
     await audit(actor, 'DEPOSIT_CONFIRMED', `${o._id} ${naira(o.priceKobo)} via ${o.method} ref ${ref}`, session)
     return { settled: true, order: o }
