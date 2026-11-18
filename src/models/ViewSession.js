@@ -10,10 +10,11 @@ const viewSessionSchema = new Schema({
   lagosDay: String,
   completedDay: String,
   rewardKobo: Number,
+  oneShot: Boolean, // always true: one validated view per member per campaign (a relaunched video is a NEW campaign)
 }, { timestamps: true })
 
 // One validated view per member per campaign, and only one video in progress at a time.
-viewSessionSchema.index({ user: 1, campaign: 1 }, { unique: true, partialFilterExpression: { status: 'COMPLETED' } })
+viewSessionSchema.index({ user: 1, campaign: 1 }, { name: 'oneShotPerCampaign', unique: true, partialFilterExpression: { status: 'COMPLETED', oneShot: true } })
 viewSessionSchema.index({ user: 1 }, { unique: true, partialFilterExpression: { status: 'STARTED' } })
 viewSessionSchema.index({ lagosDay: 1 })
 viewSessionSchema.index({ completedDay: 1 })

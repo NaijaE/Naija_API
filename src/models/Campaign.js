@@ -23,6 +23,9 @@ const campaignSchema = new Schema({
   fundingSource: { type: String, enum: ['ADVERTISER', 'PLATFORM'], default: 'ADVERTISER' },
   order: { type: Schema.Types.ObjectId, ref: 'Order' },
   packageId: String,
+  // House (platform-funded) campaigns relaunch themselves with the same tier and budget when they run out. Closing a live campaign stops the chain.
+  autoRelaunch: { type: Boolean, default: true },
+  relaunchedFrom: { type: Schema.Types.ObjectId, ref: 'Campaign' }, // set when the house brings an ended campaign's video back
   liveAt: Date,
   createdBy: String,
 }, { timestamps: true })

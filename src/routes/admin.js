@@ -153,6 +153,28 @@ r.post('/campaigns/:id/package', validate(idParam, 'params'), validate(z.object(
   await audit(req.user.email, 'CAMPAIGN_PACKAGE_SET', `${c._id} ${pkg.id}`)
   res.json({ campaign: c })
 }))
+// Bring the video of an elapsed campaign (budget used up, or closed after it had gone live) back as a NEW house campaign.
+// It is platform-funded, so it goes live straight away. Members who watched the old campaign can earn from this new one.
+// The old campaign is left exactly as it was. The reward follows the tier (default: the old campaign's tier).
+r.post('/campaigns/:id/relaunch', validate(idParam, 'params'), validate(z.object({
+  platformBudgetKobo: z.number().int().positive(), packageId: z.enum(['spark', 'boost', 'prime']).optional(),
+})), ah(async (req, res) => {
+  const old = await Campaign.findOne({ _id: req.params.id, status: { $in: ['EXHAUSTED', 'CLOSED'] }, liveAt: { $exists: true }, videoPublicId: { $exists: true, $ne: null } })
+  if (!old) throw httpError(409, 'Only a campaign that went live and has ended, with a video, can be relaunched.')
+  const cfg = await getSettings()
+  const pkg = cfg.packages.find((p) => p.id === (req.body.packageId || old.packageId))
+  if (!pkg) throw httpError(400, 'Choose a package tier for the new campaign.')
+  const rate = pkg.memberRewardKobo // platform-funded: every view costs exactly the member reward
+  if (req.body.platformBudgetKobo < rate) throw httpError(400, 'The budget must cover at least one view.')
+  const v = await inspectVideo(old.videoPublicId) // makes sure the video file still exists
+  const c = await Campaign.create({
+    name: old.name, sponsor: old.sponsor, title: old.title, videoPublicId: old.videoPublicId, videoUrl: v.url, durationSec: v.durationSec,
+    packageId: pkg.id, rewardKobo: rate, advertiserRateKobo: rate, budgetKobo: req.body.platformBudgetKobo, completionCap: Math.floor(req.body.platformBudgetKobo / rate),
+    fundingSource: 'PLATFORM', prepaymentRef: 'PLATFORM-FUNDS', status: 'ACTIVE', liveAt: new Date(), createdBy: req.user.email, relaunchedFrom: old._id,
+  })
+  await audit(req.user.email, 'CAMPAIGN_RELAUNCHED', `${old._id} -> ${c._id}, ${pkg.id}, budget ${c.budgetKobo} kobo, ${c.completionCap} views`)
+  res.status(201).json({ campaign: c })
+}))
 // Record cleared advertiser money for an admin-created campaign, then it goes live.
 r.post('/campaigns/:id/fund', validate(idParam, 'params'), validate(z.object({ amountKobo: z.number().int().positive(), reference: z.string().trim().min(3).max(100) })), ah(async (req, res) => {
   const c = await Campaign.findOne({ _id: req.params.id, status: 'PENDING_REVIEW' })

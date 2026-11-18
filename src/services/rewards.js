@@ -58,7 +58,7 @@ export async function startView(user, campaignId) {
   let vs = await ViewSession.findOne({ user: user._id, status: 'STARTED' })
   if (vs && String(vs.campaign) !== String(campaign._id)) throw httpError(409, 'Finish the video you are currently watching first.')
   if (!vs) {
-    try { vs = await ViewSession.create({ user: user._id, campaign: campaign._id, lagosDay: lagosDay() }) }
+    try { vs = await ViewSession.create({ user: user._id, campaign: campaign._id, lagosDay: lagosDay(), oneShot: true }) }
     catch (e) { if (e.code === 11000) throw httpError(409, 'Finish the video you are currently watching first.'); throw e }
   }
   const elapsed = Math.floor((Date.now() - vs.startedAt.getTime()) / 1000)
@@ -90,7 +90,20 @@ export async function completeView(user, sessionId) {
     )
     if (!c) throw httpError(409, 'This campaign has just run out of funds. No reward was taken from you.')
     if (c.budgetKobo - c.consumedKobo < c.advertiserRateKobo || c.completions >= c.completionCap) {
-      await Campaign.updateOne({ _id: c._id }, { status: 'EXHAUSTED' }, { session })
+      const ended = await Campaign.updateOne({ _id: c._id, status: { $ne: 'EXHAUSTED' } }, { status: 'EXHAUSTED' }, { session })
+      // A house campaign (platform-funded, no advertiser order) that has run out starts again by itself: a NEW campaign with
+      // the same video, tier and budget. Members who watched the old one can earn from the new one. The old campaign is untouched.
+      if (ended.modifiedCount === 1 && c.fundingSource === 'PLATFORM' && !c.order && c.autoRelaunch !== false && c.videoUrl) {
+        const tier = cfg.packages.find((p) => p.id === c.packageId)
+        const rate = tier ? tier.memberRewardKobo : c.advertiserRateKobo
+        if (c.budgetKobo >= rate) {
+          await Campaign.create([{
+            name: c.name, sponsor: c.sponsor, title: c.title, videoPublicId: c.videoPublicId, videoUrl: c.videoUrl, durationSec: c.durationSec,
+            packageId: c.packageId, rewardKobo: rate, advertiserRateKobo: rate, budgetKobo: c.budgetKobo, completionCap: Math.floor(c.budgetKobo / rate),
+            fundingSource: 'PLATFORM', prepaymentRef: 'PLATFORM-FUNDS', status: 'ACTIVE', liveAt: new Date(), createdBy: 'auto-relaunch', relaunchedFrom: c._id, autoRelaunch: true,
+          }], { session })
+        }
+      }
     }
 
     vs.status = 'COMPLETED'; vs.completedAt = new Date(); vs.completedDay = day; vs.rewardKobo = c.rewardKobo
