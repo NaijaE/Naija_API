@@ -10,7 +10,7 @@ import { requireAuth, requireMember, requireVerified } from '../middleware/auth.
 import { proofUpload } from '../middleware/upload.js'
 import { getSettings } from '../services/settings.js'
 import { uploadProof } from '../services/cloudinary.js'
-import { initPaystack, initFlutterwave } from '../services/payments.js'
+import { initPaystack } from '../services/payments.js'
 import { verifyAndSettleGateway } from '../services/orders.js'
 import { config } from '../config.js'
 import { naira } from '../utils/money.js'
@@ -20,7 +20,7 @@ r.use(requireAuth, requireVerified, requireMember)
 
 const create = z.object({
   packageId: z.enum(['spark', 'boost', 'prime']),
-  method: z.enum(['PAYSTACK', 'FLUTTERWAVE', 'BANK_TRANSFER']),
+  method: z.enum(['PAYSTACK', 'BANK_TRANSFER']), // Flutterwave is no longer offered (old Flutterwave orders still settle)
 })
 
 r.get('/', ah(async (req, res) => {
@@ -51,9 +51,7 @@ r.post('/', proofUpload.single('proof'), validate(create), ah(async (req, res) =
   order.gatewayRef = `NE-${order._id}`
   const returnUrl = `${config.paymentReturnUrl}${config.paymentReturnUrl.includes('?') ? '&' : '?'}order=${order._id}`
   try {
-    const init = b.method === 'PAYSTACK'
-      ? await initPaystack({ email: req.user.email, amountKobo: order.priceKobo, reference: order.gatewayRef, callbackUrl: returnUrl })
-      : await initFlutterwave({ email: req.user.email, name: req.user.name, phone: req.user.phone, amountKobo: order.priceKobo, reference: order.gatewayRef, callbackUrl: returnUrl })
+    const init = await initPaystack({ email: req.user.email, amountKobo: order.priceKobo, reference: order.gatewayRef, callbackUrl: returnUrl })
     await order.save()
     res.status(201).json({ order: { id: order._id, status: order.status }, paymentUrl: init.paymentUrl })
   } catch (e) {

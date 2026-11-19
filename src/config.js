@@ -28,8 +28,8 @@ export const config = {
   smtp: { host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT) || 587, user: process.env.SMTP_USER, pass: process.env.SMTP_PASS, from: process.env.MAIL_FROM || 'Naija Earn <no-reply@localhost>' },
   termii: { apiKey: process.env.TERMII_API_KEY, senderId: process.env.TERMII_SENDER_ID || 'NaijaEarn', channel: process.env.TERMII_CHANNEL || 'dnd' },
   bank: {
-    bank: process.env.BANK_NAME || 'Demo Bank',
-    accountName: process.env.BANK_ACCOUNT_NAME || 'Naija Earn Ltd',
-    accountNumber: process.env.BANK_ACCOUNT_NUMBER || '0000000000',
+    bank: process.env.BANK_NAME || 'Opay',
+    accountName: process.env.BANK_ACCOUNT_NAME || 'Chukwudi Godwin',
+    accountNumber: process.env.BANK_ACCOUNT_NUMBER || '9043934055',
   },
 }
